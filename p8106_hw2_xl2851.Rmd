@@ -1,0 +1,156 @@
+---
+title: "hw2_xl2851"
+author: "xinran"
+date: "3/21/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(caret)
+library(patchwork)
+library(splines)
+library(gam)
+library(mgcv)
+library(boot)
+library(ggplot2)
+library(pdp)
+library(earth)
+```
+
+```{r}
+#import data
+college = read_csv("./data/College.csv")%>%
+  janitor::clean_names()
+#exclude Columbia University and the "college" column
+college_tr = college %>%  
+  filter(college != "Columbia University") %>% 
+  select(-college)
+```
+
+## Set random seed
+
+```{r}
+set.seed(1)
+```
+
+
+## (a) Create scatter plots of response vs. predictors.
+
+response vs predictors
+
+```{r,fig.height=12, fig.width=12}
+# matrix of predictors
+x = model.matrix(outstate ~ .,college_tr)[,-1] 
+# vector of response
+y = college_tr$outstate
+
+theme1 <- trellis.par.get()
+theme1$plot.symbol$col <- rgb(.2, .4, .2, .5) 
+theme1$plot.symbol$pch <- 16
+theme1$plot.line$col <- rgb(.8, .1, .1, 1) 
+theme1$plot.line$lwd <- 2
+theme1$strip.background$col <- rgb(.0, .2, .6, .2)
+trellis.par.set(theme1)
+featurePlot(x, y, plot = "scatter", labels = c("","Y"), type = c("p"), layout = c(4, 4))
+```
+
+## (b) Fit a smoothing spline model using Terminal as the only predictor of Outstate for a range of degrees of freedom, as well as the degree of freedom obtained by generalized crossvalidation, and plot the resulting fits. Describe the results obtained.
+
+```{r}
+fit.ss=smooth.spline(college_tr$terminal)
+
+fit.ss$df
+
+terminallims <- range(college_tr$terminal)
+terminal.grid <- seq(from = terminallims[1],to = terminallims[2])
+
+pred.ss <- predict(fit.ss,
+                   x = terminal.grid)
+
+pred.ss.df <- data.frame(pred = pred.ss$y,
+                         terminal = terminal.grid)
+
+p <- ggplot(data = college_tr, aes(x = terminal, y = outstate)) +
+     geom_point(color = rgb(.2, .4, .2, .5))
+p +
+geom_line(aes(x = terminal, y = pred), data = pred.ss.df,
+          color = rgb(.8, .1, .1, 1)) + theme_bw()
+```
+
+description: The degree of freedom generalized by cross validation is `r fit.ss$df` There is an increasing, monotonic but non-linear relationship between terminal and outstate. There seems to be a smooth model that fits the data.
+
+## (c) Fit a generalized additive model (GAM) using all the predictors. Plot the results and explain your findings.
+```{r}
+ctrl1 <-trainControl(method = "cv", number = 10)
+set.seed(1)
+gam.fit <-train(x, y,
+                method = "gam",
+                tuneGrid =data.frame(method = "GCV.Cp", select =c(TRUE,FALSE)),
+                trControl = ctrl1)
+
+gam.fit$bestTune
+```
+
+```{r}
+gam.fit$finalModel
+```
+
+```{r}
+plot(gam.fit$finalModel)
+```
+
+## (d)(1) Fit a multivariate adaptive regression spline (MARS) model using all the predictors. Report the final model. 
+
+```{r}
+mars_grid <- expand.grid(degree = 1:2, 
+                         nprune = 2:10)
+
+set.seed(1)
+mars.fit <- train(x, y,
+                 method = "earth",
+                 tuneGrid = mars_grid,
+                 trControl = ctrl1)
+
+ggplot(mars.fit)
+
+mars.fit$bestTune
+
+```
+
+The final model is:
+```{r}
+coef(mars.fit$finalModel)
+```
+
+## (d)(2)Present the partial dependence plot of an arbitrary predictor in your final model.
+```{r}
+p1 <- partial(mars.fit, pred.var = c("perc_alumni"), grid.resolution = 10) %>% autoplot()
+
+grid.arrange(p1)
+```
+
+## (e) Based on the above GAM and MARS models, predict the out-of-state tuition of Columbia University.
+### Predict basing on GAM
+
+```{r}
+columbia_u = college %>% 
+  filter(college == "Columbia University")
+pred.gam = predict(gam.fit,
+                   newdata = columbia_u )
+pred.gam
+```
+
+The out-of-state tuition of Columbia University is predicted to be 17728.51$ by the above GAM model.
+
+### Predict basing on MARS
+
+```{r}
+pred.mars = predict(mars.fit,
+                    newdata = columbia_u)
+pred.mars
+```
+
+The predicted out of state tuition for Columbia University using the MARS model is 17469.90$.
